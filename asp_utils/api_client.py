@@ -152,110 +152,24 @@ def create_kafka_connection(
             os.remove(temp_config_file)
 
 
-def create_stream_processor(
+def execute_stream_processing_javascript(
     connection_user: str,
     connection_password: str,
     stream_processor_url: str,
-    stream_processor_prefix: str,
-    kafka_connection_name: str,
-    mongodb_connection_name: str,
-    database: str,
-    collection: str,
-    processor_type: str,
-    topic_prefix: Optional[str] = None,
-    topics: Optional[Union[str, List[str]]] = None,
-    auto_offset_reset: Optional[str] = None
-) -> bool:
+    javascript_shell_code: str
+) -> tuple[bool, str, str]:
     """
-    Create a stream processor using mongosh and sp.createStreamProcessor.
+    Execute MongoDB Shell JavaScript against the stream processing instance.
     
     Args:
         connection_user: MongoDB user for authentication
         connection_password: MongoDB password for authentication  
         stream_processor_url: MongoDB stream processor instance URL
-        stream_processor_prefix: Prefix for stream processor name
-        kafka_connection_name: Name of the Kafka connection
-        mongodb_connection_name: Name of the MongoDB connection
-        database: Database name
-        collection: Collection name
-        processor_type: Type of processor ('source' or 'sink')
-        topic_prefix: Topic prefix for source processors (required for source)
-        topics: Topics for sink processors (required for sink)
-        auto_offset_reset: Auto offset reset strategy for sink processors
+        javascript_shell_code: JavaScript code to execute in MongoDB Shell
         
     Returns:
-        bool: True if stream processor was created successfully, False otherwise
+        tuple: (success, stdout, stderr)
     """
-    
-    # Construct stream processor name
-    stream_processor_name = f"{stream_processor_prefix}_{database}_{collection}"
-    
-    # Create pipeline based on processor type
-    if processor_type == "source":
-        if not topic_prefix:
-            print(f"✗ Error: topic_prefix is required for source processors")
-            return False
-            
-        # Construct topic name
-        topic_name = f"{topic_prefix}.{database}.{collection}"
-        
-        # Create source pipeline with $source (MongoDB) -> $emit (Kafka)
-        pipeline = [
-            {
-                "$source": {
-                    "connectionName": mongodb_connection_name,
-                    "db": database,
-                    "coll": collection
-                }
-            },
-            {
-                "$emit": {
-                    "connectionName": kafka_connection_name,
-                    "topic": topic_name
-                }
-            }
-        ]
-        
-    elif processor_type == "sink":
-        if not topics:
-            print(f"✗ Error: topics is required for sink processors")
-            return False
-            
-        # Create the $source stage for Kafka input
-        source_stage = {
-            "connectionName": kafka_connection_name,
-            "topic": topics
-        }
-        
-        # Add config with auto_offset_reset if provided
-        if auto_offset_reset:
-            source_stage["config"] = {
-                "auto_offset_reset": auto_offset_reset
-            }
-        
-        # Create sink pipeline with $source (Kafka) -> $merge (MongoDB)
-        pipeline = [
-            {
-                "$source": source_stage
-            },
-            {
-                "$merge": {
-                    "into": {
-                        "connectionName": mongodb_connection_name,
-                        "db": database,
-                        "coll": collection
-                    }
-                }
-            }
-        ]
-        
-    else:
-        print(f"✗ Error: Invalid processor_type '{processor_type}'. Must be 'source' or 'sink'")
-        return False
-    
-    # Create JavaScript command for mongosh
-    pipeline_json = json.dumps(pipeline)
-    js_command = f'sp.createStreamProcessor("{stream_processor_name}", {pipeline_json})'
     
     # Ensure URL ends with exactly one slash
     if not stream_processor_url.endswith('/'):
@@ -269,39 +183,211 @@ def create_stream_processor(
         '--authenticationDatabase', 'admin',
         '--username', connection_user,
         '--password', connection_password,
-        '--eval', js_command
+        '--eval', javascript_shell_code
     ]
     
     try:
-        print(f"Creating stream processor: {stream_processor_name}")
-        print(f"  Command: {' '.join(mongosh_cmd[:9])} --eval [JS_COMMAND]")
-        print(f"  JS Command: {js_command}")
+        print(f"Executing JavaScript: {javascript_shell_code}")
         result = subprocess.run(mongosh_cmd, capture_output=True, text=True, timeout=60)
         
-        if result.returncode == 0:
-            # Check if creation was successful or if it already exists
-            if "already exists" in result.stderr.lower() or "duplicate" in result.stderr.lower():
-                print(f"⚠ Stream processor already exists: {stream_processor_name}")
-                return True
-            else:
-                print(f"✓ Successfully created stream processor: {stream_processor_name}")
-                return True
-        else:
-            # Check for already exists error in stderr
-            if "already exists" in result.stderr.lower() or "duplicate" in result.stderr.lower():
-                print(f"⚠ Stream processor already exists: {stream_processor_name}")
-                return True
-            else:
-                print(f"✗ Failed to create stream processor {stream_processor_name}")
-                print(f"  Error: {result.stderr}")
-                return False
-                
+        return (result.returncode == 0, result.stdout, result.stderr)
+        
     except subprocess.TimeoutExpired:
-        print(f"✗ Timeout creating stream processor {stream_processor_name}")
-        return False
+        error_msg = f"✗ Timeout executing JavaScript code"
+        print(error_msg)
+        return (False, "", error_msg)
     except Exception as e:
-        print(f"✗ Unexpected error creating stream processor {stream_processor_name}: {e}")
-        return False
+        error_msg = f"✗ Unexpected error executing JavaScript code: {e}"
+        print(error_msg)
+        return (False, "", error_msg)
+
+
+def create_stream_processor(
+    connection_user: str,
+    connection_password: str,
+    stream_processor_url: str,
+    stream_processor_name: str,
+    pipeline: List[Dict[str, Any]]
+) -> bool:
+    """
+    Create a stream processor with a custom pipeline using mongosh and sp.createStreamProcessor.
+    
+    Args:
+        connection_user: MongoDB user for authentication
+        connection_password: MongoDB password for authentication  
+        stream_processor_url: MongoDB stream processor instance URL
+        stream_processor_name: Name of the stream processor
+        pipeline: List of pipeline stages for the stream processor
+        
+    Returns:
+        bool: True if stream processor was created successfully, False otherwise
+    """
+    
+    # Create JavaScript command for mongosh
+    pipeline_json = json.dumps(pipeline)
+    js_command = f'sp.createStreamProcessor("{stream_processor_name}", {pipeline_json})'
+    
+    # Execute the JavaScript code
+    success, stdout, stderr = execute_stream_processing_javascript(
+        connection_user,
+        connection_password,
+        stream_processor_url,
+        js_command
+    )
+    
+    if success:
+        # Check if creation was successful or if it already exists
+        if "already exists" in stderr.lower() or "duplicate" in stderr.lower():
+            print(f"⚠ Stream processor already exists: {stream_processor_name}")
+            return True
+        else:
+            print(f"✓ Successfully created stream processor: {stream_processor_name}")
+            return True
+    else:
+        # Check for already exists error in stderr
+        if "already exists" in stderr.lower() or "duplicate" in stderr.lower():
+            print(f"⚠ Stream processor already exists: {stream_processor_name}")
+            return True
+        else:
+            print(f"✗ Failed to create stream processor {stream_processor_name}")
+            print(f"  Error: {stderr}")
+            return False
+
+
+def process_temporary_pipeline(
+    connection_user: str,
+    connection_password: str,
+    stream_processor_url: str,
+    pipeline: List[Dict[str, Any]],
+    dlq: Optional[str] = None,
+    dry_run: bool = False
+) -> tuple[bool, str, str]:
+    """
+    Execute a temporary pipeline using sp.process().
+    
+    Args:
+        connection_user: MongoDB user for authentication
+        connection_password: MongoDB password for authentication  
+        stream_processor_url: MongoDB stream processor instance URL
+        pipeline: List of pipeline stages to execute
+        dlq: Dead letter queue name (optional)
+        dry_run: Whether to run in dry-run mode (default: False)
+        
+    Returns:
+        tuple: (success, stdout, stderr)
+    """
+    
+    # Create JavaScript command for sp.process()
+    pipeline_json = json.dumps(pipeline)
+    
+    # Build options object
+    options = {}
+    if dlq is not None:
+        options["dlq"] = dlq
+    if dry_run:
+        options["dryRun"] = True
+    
+    # Create the JavaScript command
+    if options:
+        options_json = json.dumps(options)
+        js_command = f'sp.process({pipeline_json}, {options_json})'
+    else:
+        js_command = f'sp.process({pipeline_json})'
+    
+    # Execute the JavaScript code
+    return execute_stream_processing_javascript(
+        connection_user,
+        connection_password,
+        stream_processor_url,
+        js_command
+    )
+
+
+def create_simple_mongodb_to_kafka_topic_pipeline(
+    mongodb_connection_name: str,
+    database: str,
+    collection: str,
+    kafka_connection_name: str,
+    topic: str
+) -> List[Dict[str, Any]]:
+    """
+    Create a simple MongoDB -> Kafka pipeline.
+    
+    Args:
+        mongodb_connection_name: Name of the MongoDB connection
+        database: Database name
+        collection: Collection name
+        kafka_connection_name: Name of the Kafka connection
+        topic: Kafka topic name
+        
+    Returns:
+        List of pipeline stages
+    """
+    return [
+        {
+            "$source": {
+                "connectionName": mongodb_connection_name,
+                "db": database,
+                "coll": collection
+            }
+        },
+        {
+            "$emit": {
+                "connectionName": kafka_connection_name,
+                "topic": topic
+            }
+        }
+    ]
+
+
+def create_simple_kafka_topic_to_mongodb_pipeline(
+    kafka_connection_name: str,
+    topics: Union[str, List[str]],
+    mongodb_connection_name: str,
+    database: str,
+    collection: str,
+    auto_offset_reset: Optional[str] = None
+) -> List[Dict[str, Any]]:
+    """
+    Create a simple Kafka -> MongoDB pipeline.
+    
+    Args:
+        kafka_connection_name: Name of the Kafka connection
+        topics: Kafka topic(s) to consume from
+        mongodb_connection_name: Name of the MongoDB connection
+        database: Database name
+        collection: Collection name
+        auto_offset_reset: Auto offset reset strategy
+        
+    Returns:
+        List of pipeline stages
+    """
+    # Create the $source stage for Kafka input
+    source_stage = {
+        "connectionName": kafka_connection_name,
+        "topic": topics
+    }
+    
+    # Add config with auto_offset_reset if provided
+    if auto_offset_reset:
+        source_stage["config"] = {
+            "auto_offset_reset": auto_offset_reset
+        }
+    
+    return [
+        {
+            "$source": source_stage
+        },
+        {
+            "$merge": {
+                "into": {
+                    "connectionName": mongodb_connection_name,
+                    "db": database,
+                    "coll": collection
+                }
+            }
+        }
+    ]
 
 
 def create_topic(
