@@ -52,7 +52,8 @@ from asp_utils import (
     check_atlas_auth_with_login, 
     create_mongodb_connection, 
     validate_main_config, 
-    create_stream_processor
+    create_stream_processor,
+    create_simple_kafka_topic_to_mongodb_pipeline
 )
 
 
@@ -192,18 +193,25 @@ def process_connector_configs(main_config: Dict[str, Any], configs_folder: str) 
         
         # Create stream processor if both connections exist
         if mongodb_connection_created and kafka_connection_created:
+            # Construct stream processor name
+            stream_processor_name = f"{main_config['stream-processor-prefix']}_{database}_{collection}"
+            
+            # Create sink pipeline (Kafka -> MongoDB)
+            pipeline = create_simple_kafka_topic_to_mongodb_pipeline(
+                main_config["kafka-connection-name"],
+                topics,
+                main_config["mongodb-connection-name"],
+                database,
+                collection,
+                auto_offset_reset
+            )
+            
             stream_processor_success = create_stream_processor(
                 connection_user,
                 connection_password,
                 main_config["mongodb-stream-processor-instance-url"],
-                main_config["stream-processor-prefix"],
-                main_config["kafka-connection-name"],
-                main_config["mongodb-connection-name"],
-                database,
-                collection,
-                "sink",
-                topics=topics,
-                auto_offset_reset=auto_offset_reset
+                stream_processor_name,
+                pipeline
             )
             
             if stream_processor_success:

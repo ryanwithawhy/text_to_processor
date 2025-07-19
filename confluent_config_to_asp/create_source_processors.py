@@ -45,7 +45,8 @@ from asp_utils import (
     create_mongodb_connection, 
     validate_main_config, 
     create_stream_processor,
-    create_topic
+    create_topic,
+    create_simple_mongodb_to_kafka_topic_pipeline
 )
 
 
@@ -180,17 +181,25 @@ def process_connector_configs(main_config: Dict[str, Any], configs_folder: str) 
                 
                 # Create stream processor if both connections exist
                 if mongodb_connection_created:
+                    # Construct stream processor name and topic name
+                    stream_processor_name = f"{main_config['stream-processor-prefix']}_{database}_{collection}"
+                    topic_name = f"{topic_prefix}.{database}.{collection}"
+                    
+                    # Create source pipeline (MongoDB -> Kafka)
+                    pipeline = create_simple_mongodb_to_kafka_topic_pipeline(
+                        main_config["mongodb-connection-name"],
+                        database,
+                        collection,
+                        main_config["kafka-connection-name"],
+                        topic_name
+                    )
+                    
                     stream_processor_success = create_stream_processor(
                         connection_user,
                         connection_password,
                         main_config["mongodb-stream-processor-instance-url"],
-                        main_config["stream-processor-prefix"],
-                        main_config["kafka-connection-name"],
-                        main_config["mongodb-connection-name"],
-                        database,
-                        collection,
-                        "source",
-                        topic_prefix=topic_prefix
+                        stream_processor_name,
+                        pipeline
                     )
                     
                     if stream_processor_success:
