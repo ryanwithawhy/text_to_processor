@@ -1,0 +1,9 @@
+confluent_config_to_asp/command.txt
+confluent_config_to_asp/mongodb_source/config.json
+confluent_config_to_asp/mongodb_sink/config.json
+confluent_config_to_asp/mongodb_source/sources
+confluent_config_to_asp/local_resources/
+confluent_config_to_asp/topics
+confluent_config_to_asp/sources
+*__pycache__/
+*.claude
