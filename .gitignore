@@ -7,3 +7,4 @@ confluent_config_to_asp/topics
 confluent_config_to_asp/sources
 *__pycache__/
 *.claude
+*mongodb_test_config.json

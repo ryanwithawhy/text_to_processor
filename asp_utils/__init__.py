@@ -13,7 +13,8 @@ from .api_client import (
     create_simple_mongodb_to_kafka_topic_pipeline,
     create_simple_kafka_topic_to_mongodb_pipeline,
     execute_stream_processing_javascript,
-    process_temporary_pipeline
+    process_temporary_pipeline,
+    execute_mongodb_command
 )
 
 from .auth import check_atlas_auth_with_login
@@ -32,6 +33,7 @@ __all__ = [
     'create_simple_kafka_topic_to_mongodb_pipeline',
     'execute_stream_processing_javascript',
     'process_temporary_pipeline',
+    'execute_mongodb_command',
     'check_atlas_auth_with_login',
     'load_json_file',
     'validate_main_config'
