@@ -1,3 +1,0 @@
-# Text to Processor - User Guide
-
-Documentation coming soon...

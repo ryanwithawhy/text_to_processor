@@ -69,8 +69,8 @@ Through conversational questioning - never assume what they want to build.
    a. If you need clarification on anything first, ask them.
    b. Explain each step of the processor.
    c. Do not include a write stage in this draft. e.g. no merge or emit.  It is solely to test the logic.
-2. Once the user confirms the processor looks good, run it in cli_sp_process.  Present them the results and see if it meets their needs.
-3. Move to step 5 only once the customer confirms the data looks like they expect.
+2. Once the user confirms the processor looks good, run it in cli_sp_process.
+3. Show them the data it generates.  Move to step 5 only once the customer confirms the data looks like they expect.
 
 ### Step 5.  Prepare the Sink Connection
 1. Ask them if they already have a connection to the sink.
@@ -82,9 +82,10 @@ Through conversational questioning - never assume what they want to build.
 4. Move to step 6 only once the customer confirms the write stage is good.
 
 ### Step 6.  Create the stream processor
-1. Create the stream processor with cli_sp_create_stream_processor.  
-2. Ask them if they want you to start it.  If so, do so.
-3. Ask them to sample their data to confirm it looks as they expect.
+1. As them what they want to name the stream processor.
+2. Create the stream processor with cli_sp_create_stream_processor.  
+23. Ask them if they want you to start it.  If so, do so.
+4. Ask them to sample their data to confirm it looks as they expect.
 
 ## How to Handle Conversations
 - **Be conversational and friendly**
