@@ -154,7 +154,8 @@ def execute_stream_processing_javascript(
     connection_user: str,
     connection_password: str,
     stream_processor_url: str,
-    javascript_shell_code: str
+    javascript_shell_code: str,
+    timeout: int = 300
 ) -> tuple[bool, str, str]:
     """
     Execute MongoDB Shell JavaScript against the stream processing instance.
@@ -164,6 +165,7 @@ def execute_stream_processing_javascript(
         connection_password: MongoDB password for authentication  
         stream_processor_url: MongoDB stream processor instance URL
         javascript_shell_code: JavaScript code to execute in MongoDB Shell
+        timeout: Timeout in seconds for the command (default: 300)
         
     Returns:
         tuple: (success, stdout, stderr)
@@ -173,34 +175,24 @@ def execute_stream_processing_javascript(
     if not stream_processor_url.endswith('/'):
         stream_processor_url += '/'
     
-    # Build mongosh command
-    mongosh_cmd = [
-        'mongosh',
-        stream_processor_url,
-        '--tls',
-        '--authenticationDatabase', 'admin',
-        '--username', connection_user,
-        '--password', connection_password,
-        '--eval', javascript_shell_code
-    ]
-    
     try:
         print(f"Executing JavaScript: {javascript_shell_code}")
-        result = subprocess.run(mongosh_cmd, capture_output=True, text=True, timeout=60)
         
-        return (result.returncode == 0, result.stdout, result.stderr)
+        # Do exactly what worked: echo 'command' | mongosh with all the args
+        full_command = f'echo \'{javascript_shell_code}\' | mongosh "{stream_processor_url}" --tls --authenticationDatabase admin --username {connection_user} --password {connection_password}'
         
-    except subprocess.TimeoutExpired:
-        error_msg = f"✗ Timeout executing JavaScript code"
-        print(error_msg)
-        return (False, "", error_msg)
+        # Execute with streaming output (no capture_output to allow real-time streaming)
+        result = subprocess.run(full_command, shell=True, text=True, timeout=timeout)
+        
+        return (result.returncode == 0, "Command executed with streaming output", "")
+        
     except Exception as e:
         error_msg = f"✗ Unexpected error executing JavaScript code: {e}"
         print(error_msg)
         return (False, "", error_msg)
 
 
-def create_stream_processor(
+def sp_create_stream_processor(
     connection_user: str,
     connection_password: str,
     stream_processor_url: str,
@@ -252,13 +244,14 @@ def create_stream_processor(
             return False
 
 
-def process_temporary_pipeline(
+def sp_process(
     connection_user: str,
     connection_password: str,
     stream_processor_url: str,
     pipeline: List[Dict[str, Any]],
     dlq: Optional[str] = None,
-    dry_run: bool = False
+    dry_run: bool = False,
+    timeout: int = 300
 ) -> tuple[bool, str, str]:
     """
     Execute a temporary pipeline using sp.process().
@@ -270,6 +263,7 @@ def process_temporary_pipeline(
         pipeline: List of pipeline stages to execute
         dlq: Dead letter queue name (optional)
         dry_run: Whether to run in dry-run mode (default: False)
+        timeout: Timeout in seconds for the command (default: 300)
         
     Returns:
         tuple: (success, stdout, stderr)
@@ -292,99 +286,84 @@ def process_temporary_pipeline(
     else:
         js_command = f'sp.process({pipeline_json})'
     
-    # Execute the JavaScript code
+    # Execute the JavaScript code with custom timeout
     return execute_stream_processing_javascript(
         connection_user,
         connection_password,
         stream_processor_url,
-        js_command
+        js_command,
+        timeout
     )
 
 
-def execute_mongodb_command(
-    mongodb_url: str,
-    database: str,
-    command: str
+def sp_start_processor(
+    connection_user: str,
+    connection_password: str,
+    stream_processor_url: str,
+    processor_name: str,
+    timeout: int = 300
 ) -> tuple[bool, str, str]:
     """
-    Execute MongoDB shell commands against a regular MongoDB cluster.
+    Start a stream processor using sp.["processor-name"].start().
     
     Args:
-        mongodb_url: Full MongoDB connection string including credentials
-                    (e.g., mongodb+srv://user:pass@cluster.mongodb.net/?retryWrites=true)
-        database: Database name to connect to
-        command: JavaScript/MongoDB shell command to execute
+        connection_user: MongoDB user for authentication
+        connection_password: MongoDB password for authentication  
+        stream_processor_url: MongoDB stream processor instance URL
+        processor_name: Name of the processor to start
+        timeout: Timeout in seconds for the command (default: 300)
         
     Returns:
         tuple: (success, stdout, stderr)
     """
     
-    # For mongodb+srv URLs, we connect to the URL directly and specify database in the command
-    # For other URLs, we might need to append the database
-    if mongodb_url.startswith('mongodb+srv://') or mongodb_url.startswith('mongodb://'):
-        full_url = mongodb_url
-    else:
-        # Legacy handling - ensure URL ends with exactly one slash
-        if not mongodb_url.endswith('/'):
-            mongodb_url += '/'
-        full_url = f"{mongodb_url}{database}"
+    # Create JavaScript command for starting the processor
+    js_command = f'sp["{processor_name}"].start()'
     
-    # Wrap command in an aborted transaction for safety (prevents any writes)
-    # Connect directly to the database and execute command without "use" statement
-    safe_command = f"""
-    session = db.getMongo().startSession();
-    session.startTransaction();
-    try {{
-        result = ({command});
-        print(typeof result === 'object' ? JSON.stringify(result) : result);
-    }} catch (e) {{
-        print('Error:', e);
-        throw e;
-    }} finally {{
-        session.abortTransaction();
-        session.endSession();
-    }}
+    # Execute the JavaScript code with custom timeout
+    return execute_stream_processing_javascript(
+        connection_user,
+        connection_password,
+        stream_processor_url,
+        js_command,
+        timeout
+    )
+
+
+def sp_stop_processor(
+    connection_user: str,
+    connection_password: str,
+    stream_processor_url: str,
+    processor_name: str,
+    timeout: int = 300
+) -> tuple[bool, str, str]:
+    """
+    Stop a stream processor using sp.["processor-name"].stop().
+    
+    Args:
+        connection_user: MongoDB user for authentication
+        connection_password: MongoDB password for authentication  
+        stream_processor_url: MongoDB stream processor instance URL
+        processor_name: Name of the processor to stop
+        timeout: Timeout in seconds for the command (default: 300)
+        
+    Returns:
+        tuple: (success, stdout, stderr)
     """
     
-    # Build mongosh command - connect directly to database to avoid "switched to db" message
-    # For mongodb+srv URLs, append the database name if not already present
-    if mongodb_url.startswith('mongodb+srv://') or mongodb_url.startswith('mongodb://'):
-        # Parse the URL to check if database is already specified
-        from urllib.parse import urlparse
-        parsed = urlparse(mongodb_url)
-        
-        # If no database in path or path is just '/', add the database
-        if not parsed.path or parsed.path == '/':
-            if parsed.query:
-                database_url = f"{parsed.scheme}://{parsed.netloc}/{database}?{parsed.query}"
-            else:
-                database_url = f"{parsed.scheme}://{parsed.netloc}/{database}"
-        else:
-            # Database already specified in URL, use as-is but connect to specified database
-            database_url = mongodb_url
-    else:
-        database_url = full_url
+    # Create JavaScript command for stopping the processor
+    js_command = f'sp["{processor_name}"].stop()'
     
-    mongosh_cmd = [
-        'mongosh',
-        database_url,
-        '--eval', safe_command
-    ]
-    
-    try:
-        print(f"Executing MongoDB command on {database}: {command}")
-        result = subprocess.run(mongosh_cmd, capture_output=True, text=True, timeout=60)
-        
-        return (result.returncode == 0, result.stdout, result.stderr)
-        
-    except subprocess.TimeoutExpired:
-        error_msg = f"✗ Timeout executing MongoDB command"
-        print(error_msg)
-        return (False, "", error_msg)
-    except Exception as e:
-        error_msg = f"✗ Unexpected error executing MongoDB command: {e}"
-        print(error_msg)
-        return (False, "", error_msg)
+    # Execute the JavaScript code with custom timeout
+    return execute_stream_processing_javascript(
+        connection_user,
+        connection_password,
+        stream_processor_url,
+        js_command,
+        timeout
+    )
+
+
 
 
 def create_simple_mongodb_to_kafka_topic_pipeline(
